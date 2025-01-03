@@ -4,8 +4,7 @@ plugins {
 	id("dev.frozenmilk.doc") version "0.0.4"
 }
 
-// TODO: modify
-android.namespace = "com.example.library"
+android.namespace = "dev.frozenmilk.wavedash"
 
 // Most FTC libraries will want the following
 ftc {
@@ -19,13 +18,29 @@ ftc {
 	}
 }
 
+repositories {
+	mavenCentral()
+	maven("https://repo.dairy.foundation/releases/")
+	maven("https://maven.brott.dev/")
+}
+
+dependencies {
+	implementation("com.acmerobotics.roadrunner:ftc:0.1.14")
+	implementation("com.acmerobotics.roadrunner:core:1.0.0")
+	implementation("com.acmerobotics.roadrunner:actions:1.0.0")
+	implementation("com.acmerobotics.dashboard:dashboard:0.4.16")
+
+	implementation("dev.frozenmilk.dairy:Core:1.0.1")
+	implementation("dev.frozenmilk.dairy:Pasteurized:1.0.0")
+	implementation("dev.frozenmilk.mercurial:Mercurial:1.0.0")
+	implementation("org.firstinspires.ftc:RobotCore:10.1.1")
+}
+
 publishing {
 	publications {
 		register<MavenPublication>("release") {
-			// TODO: modify
-			groupId = "com.example"
-			// TODO: modify
-			artifactId = "Library"
+			groupId = "dev.frozenmilk"
+			artifactId = "wavedash"
 
 			artifact(dairyDoc.dokkaHtmlJar)
 			artifact(dairyDoc.dokkaJavadocJar)
