@@ -11,10 +11,8 @@ ftc {
 	kotlin // if you don't want to use kotlin, remove this
 
 	sdk {
-		RobotCore
-		FtcCommon {
-			configurationNames += "testImplementation"
-		}
+		RobotCore("8.2.0-10.0.0-10.1.1")
+		FtcCommon("8.2.0-10.1.1")
 	}
 }
 
@@ -33,19 +31,33 @@ dependencies {
 	implementation("dev.frozenmilk.dairy:Core:1.0.1")
 	implementation("dev.frozenmilk.dairy:Pasteurized:1.0.0")
 	implementation("dev.frozenmilk.mercurial:Mercurial:1.0.0")
-	implementation("org.firstinspires.ftc:RobotCore:10.1.1")
 }
 
-publishing {
-	publications {
-		register<MavenPublication>("release") {
-			groupId = "dev.frozenmilk"
-			artifactId = "wavedash"
-
-			artifact(dairyDoc.dokkaHtmlJar)
-			artifact(dairyDoc.dokkaJavadocJar)
-
-			afterEvaluate {
+afterEvaluate {
+	publishing {
+		repositories {
+			maven {
+				name = "dairyReleases"
+				url = uri("https://repo.dairy.foundation/releases")
+				credentials(PasswordCredentials::class)
+				authentication {
+					create<BasicAuthentication>("basic")
+				}
+			}
+			maven {
+				name = "dairySnapshots"
+				url = uri("https://repo.dairy.foundation/snapshots")
+				credentials(PasswordCredentials::class)
+				authentication {
+					create<BasicAuthentication>("basic")
+				}
+			}
+		}
+		publications {
+			create<MavenPublication>("maven") {
+				groupId = "dev.frozenmilk"
+				artifactId = "wavedash"
+				version = "0.1.0-SNAPSHOT1"
 				from(components["release"])
 			}
 		}
