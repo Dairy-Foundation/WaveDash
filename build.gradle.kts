@@ -55,8 +55,8 @@ afterEvaluate {
 		publications {
 			create<MavenPublication>("maven") {
 				groupId = "dev.frozenmilk"
-				artifactId = "wavedash"
-				version = "0.1.0-SNAPSHOT1"
+				artifactId = "Wavedash"
+				version = "0.1.1-SNAPSHOT1"
 				from(components["release"])
 			}
 		}
