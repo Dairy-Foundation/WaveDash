@@ -45,17 +45,5 @@ publishing {
 				from(components["release"])
 			}
 		}
-
-		register<MavenPublication>("snapshots") {
-			groupId = "dev.frozenmilk"
-			artifactId = "Wavedash"
-
-			artifact(dairyDoc.dokkaHtmlJar)
-			artifact(dairyDoc.dokkaJavadocJar)
-
-			afterEvaluate {
-				from(components["release"])
-			}
-		}
 	}
 }
