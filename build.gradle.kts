@@ -32,31 +32,28 @@ dependencies {
 	implementation("dev.frozenmilk.mercurial:Mercurial:1.0.0")
 }
 
-afterEvaluate {
-	publishing {
-		repositories {
-			maven {
-				name = "dairyReleases"
-				url = uri("https://repo.dairy.foundation/releases")
-				credentials(PasswordCredentials::class)
-				authentication {
-					create<BasicAuthentication>("basic")
-				}
-			}
-			maven {
-				name = "dairySnapshots"
-				url = uri("https://repo.dairy.foundation/snapshots")
-				credentials(PasswordCredentials::class)
-				authentication {
-					create<BasicAuthentication>("basic")
-				}
+publishing {
+	publications {
+		register<MavenPublication>("releases") {
+			groupId = "dev.frozenMilk"
+			artifactId = "Wavedash"
+
+			artifact(dairyDoc.dokkaHtmlJar)
+			artifact(dairyDoc.dokkaJavadocJar)
+
+			afterEvaluate {
+				from(components["release"])
 			}
 		}
-		publications {
-			create<MavenPublication>("maven") {
-				groupId = "dev.frozenmilk"
-				artifactId = "Wavedash"
-				version = "0.1.1-SNAPSHOT1"
+
+		register<MavenPublication>("snapshots") {
+			groupId = "dev.frozenMilk"
+			artifactId = "Wavedash"
+
+			artifact(dairyDoc.dokkaHtmlJar)
+			artifact(dairyDoc.dokkaJavadocJar)
+
+			afterEvaluate {
 				from(components["release"])
 			}
 		}
