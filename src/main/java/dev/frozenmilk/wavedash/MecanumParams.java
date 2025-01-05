@@ -2,6 +2,7 @@ package dev.frozenmilk.wavedash;
 
 import com.acmerobotics.roadrunner.Pose2d;
 import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
 
 public abstract class MecanumParams {
     // TODO: instantiate a localizer
@@ -21,6 +22,13 @@ public abstract class MecanumParams {
     public String rbName = "rightBack";
     public String rfName = "rightFront";
     public String imuName = "imu";
+
+    // motor directions
+    public DcMotorSimple.Direction lfDirection = DcMotorSimple.Direction.REVERSE;
+    public DcMotorSimple.Direction lbDirection = DcMotorSimple.Direction.REVERSE;
+    public DcMotorSimple.Direction rfDirection = DcMotorSimple.Direction.FORWARD;
+    public DcMotorSimple.Direction rbDirection = DcMotorSimple.Direction.FORWARD;
+
 
     // drive model parameters
     public double inPerTick = 1;

@@ -32,6 +32,10 @@ dependencies {
 	implementation("dev.frozenmilk.mercurial:Mercurial:1.0.0")
 }
 
+dairyPublishing {
+	releasesRepository = snapshotsRepository
+}
+
 publishing {
 	publications {
 		register<MavenPublication>("releases") {

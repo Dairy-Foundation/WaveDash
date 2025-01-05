@@ -94,8 +94,10 @@ public class DefaultMecanumDrive implements Drive {
         rightBack.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         rightFront.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        // TODO: reverse motor directions if needed
-        //   leftFront.setDirection(DcMotorSimple.Direction.REVERSE);
+        leftFront.setDirection(params.lfDirection);
+        leftBack.setDirection(params.lbDirection);
+        rightBack.setDirection(params.rbDirection);
+        rightFront.setDirection(params.rfDirection);
 
         // TODO: make sure your config has an IMU with this name (can be BNO or BHI)
         //   see https://ftc-docs.firstinspires.org/en/latest/hardware_and_software_configuration/configuring/index.html
