@@ -1,3 +1,4 @@
+@file:JvmName("Commands")
 package dev.frozenmilk.wavedash
 
 import com.acmerobotics.roadrunner.AccelConstraint
@@ -638,7 +639,8 @@ class TrajectoryCommandBuilder private constructor(
     }
 }
 
-val defaultTrajectoryParams = TrajectoryBuilderParams(
+@JvmField
+val DEFAULT_TRAJECTORY_PARAMS = TrajectoryBuilderParams(
     1e-6,
     ProfileParams(
         0.25, 0.1, 1e-2

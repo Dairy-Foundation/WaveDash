@@ -2,8 +2,8 @@ package dev.frozenmilk.wavedash
 
 import com.acmerobotics.roadrunner.Pose2d
 import com.acmerobotics.roadrunner.PoseVelocity2d
+import com.acmerobotics.roadrunner.TimeTrajectory
 import com.acmerobotics.roadrunner.TimeTurn
-import com.acmerobotics.roadrunner.Trajectory
 import com.acmerobotics.roadrunner.Vector2d
 import dev.frozenmilk.dairy.core.wrapper.Wrapper
 import dev.frozenmilk.mercurial.commands.Command
@@ -14,12 +14,12 @@ interface Drive {
     fun setDrivePowers(powers: PoseVelocity2d)
     fun setDrivePowersWithFF(powers: PoseVelocity2d)
 
-    fun followTrajectory(trajectory: Trajectory, t: Double): Boolean
+    fun followTrajectory(trajectory: TimeTrajectory, t: Double): Boolean
     fun turn(turn: TimeTurn, t: Double): Boolean
 
     fun commandBuilder(beginPose: Pose2d): TrajectoryCommandBuilder
 
-    fun followTrajectoryCommand(trajectory: Trajectory): Command {
+    fun followTrajectoryCommand(trajectory: TimeTrajectory): Command {
         val requirements = setOf(this)
 
         val states: Set<Wrapper.OpModeState> = setOf(Wrapper.OpModeState.ACTIVE)
