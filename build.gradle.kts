@@ -23,8 +23,8 @@ repositories {
 }
 
 dependencies {
-	implementation("com.acmerobotics.roadrunner:ftc:0.1.14")
-	implementation("com.acmerobotics.roadrunner:core:1.0.0")
+	implementation("com.acmerobotics.roadrunner:ftc:0.1.16")
+	implementation("com.acmerobotics.roadrunner:core:1.0.1")
 	implementation("com.acmerobotics.dashboard:dashboard:0.4.16")
 
 	implementation("dev.frozenmilk.dairy:Core:1.0.1")
