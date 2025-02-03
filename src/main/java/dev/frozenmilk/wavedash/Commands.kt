@@ -7,358 +7,671 @@ import com.acmerobotics.roadrunner.IdentityPoseMap
 import com.acmerobotics.roadrunner.Pose2d
 import com.acmerobotics.roadrunner.Pose2dDual
 import com.acmerobotics.roadrunner.PoseMap
+import com.acmerobotics.roadrunner.ProfileParams
 import com.acmerobotics.roadrunner.Rotation2d
 import com.acmerobotics.roadrunner.Rotation2dDual
-import com.acmerobotics.roadrunner.TimeProfile
+import com.acmerobotics.roadrunner.TimeTrajectory
 import com.acmerobotics.roadrunner.TimeTurn
-import com.acmerobotics.roadrunner.Trajectory
 import com.acmerobotics.roadrunner.TrajectoryBuilder
 import com.acmerobotics.roadrunner.TrajectoryBuilderParams
 import com.acmerobotics.roadrunner.TurnConstraints
 import com.acmerobotics.roadrunner.Vector2d
 import com.acmerobotics.roadrunner.Vector2dDual
 import com.acmerobotics.roadrunner.VelConstraint
+import com.acmerobotics.roadrunner.map
 import dev.frozenmilk.mercurial.commands.Command
 import dev.frozenmilk.mercurial.commands.groups.Parallel
 import dev.frozenmilk.mercurial.commands.groups.Sequential
 import dev.frozenmilk.mercurial.commands.util.Wait
 
+
 /**
- * Builder that combines trajectories, turns, and other Commands.
+ * Builder that combines trajectories, turns, and other actions.
  */
-class TrajectoryCommandBuilder
-@JvmOverloads constructor(
-    private val trajectoryFactory: (Trajectory) -> Command,
-    private val turnFactory: (TimeTurn) -> Command,
-    beginPose: Pose2d,
-    private val params: TrajectoryBuilderParams,
+class TrajectoryCommandBuilder private constructor(
+    // constants
+    private val turnCommandFactory: TurnCommandFactory,
+    private val trajectoryCommandFactory: TrajectoryCommandFactory,
+    private val trajectoryBuilderParams: TrajectoryBuilderParams,
+    private val beginEndVel: Double,
+    private val baseTurnConstraints: TurnConstraints,
     private val baseVelConstraint: VelConstraint,
     private val baseAccelConstraint: AccelConstraint,
-    private val baseTurnConstraint: TurnConstraints,
-    private val poseMap: PoseMap = IdentityPoseMap(),
+    private val poseMap: PoseMap,
+    // vary throughout
+    private val tb: TrajectoryBuilder,
+    private val n: Int,
+    // lastPose, lastTangent are post-mapped
+    private val lastPoseUnmapped: Pose2d,
+    private val lastPose: Pose2d,
+    private val lastTangent: Rotation2d,
+    private val ms: List<MarkerFactory>,
+    private val cont: (Command) -> Command,
 ) {
-    private var builder = TrajectoryBuilder(
-        params,
-        beginPose,
-        0.0,
-        baseVelConstraint,
-        baseAccelConstraint
-    )
+    @JvmOverloads
+    constructor(
+        turnActionFactory: TurnCommandFactory,
+        trajectoryActionFactory: TrajectoryCommandFactory,
+        trajectoryBuilderParams: TrajectoryBuilderParams,
+        beginPose: Pose2d,
+        beginEndVel: Double,
+        baseTurnConstraints: TurnConstraints,
+        baseVelConstraint: VelConstraint,
+        baseAccelConstraint: AccelConstraint,
+        poseMap: PoseMap = IdentityPoseMap(),
+    ) :
+            this(
+                turnActionFactory,
+                trajectoryActionFactory,
+                trajectoryBuilderParams,
+                beginEndVel,
+                baseTurnConstraints,
+                baseVelConstraint,
+                baseAccelConstraint,
+                poseMap,
+                TrajectoryBuilder(
+                    trajectoryBuilderParams,
+                    beginPose, beginEndVel,
+                    baseVelConstraint, baseAccelConstraint,
+                    poseMap,
+                ),
+                0,
+                beginPose,
+                poseMap.map(beginPose),
+                poseMap.map(beginPose).heading,
+                emptyList(),
+                { it },
+            )
 
-    var size = 0
-        private set
-
-    private val commands: MutableList<Command> = mutableListOf()
-
-    fun endTrajectory(): TrajectoryCommandBuilder {
-        if (size != commands.size) {
-            val built = builder.build()
-            built
-                .map { trajectoryFactory(it) }
-                .forEach { commands.add(it) }
-
-            val lastPose = built.last().path.end(1).value()
-
-            builder = TrajectoryBuilder(
-                params,
+    private constructor(
+        ab: TrajectoryCommandBuilder,
+        tb: TrajectoryBuilder,
+        n: Int,
+        lastPoseUnmapped: Pose2d,
+        lastPose: Pose2d,
+        lastTangent: Rotation2d,
+        ms: List<MarkerFactory>,
+        cont: (Command) -> Command,
+    ) :
+            this(
+                ab.turnCommandFactory,
+                ab.trajectoryCommandFactory,
+                ab.trajectoryBuilderParams,
+                ab.beginEndVel,
+                ab.baseTurnConstraints,
+                ab.baseVelConstraint,
+                ab.baseAccelConstraint,
+                ab.poseMap,
+                tb,
+                n,
+                lastPoseUnmapped,
                 lastPose,
-                0.0,
+                lastTangent,
+                ms,
+                cont
+            )
+
+    /**
+     * Ends the current trajectory in progress. No-op if no trajectory segments are pending.
+     */
+    fun endTrajectory() =
+        if (n == 0) {
+            require(ms.isEmpty()) { "Cannot end trajectory with pending markers" }
+
+            this
+        } else {
+            val ts = tb.build()
+            val endPoseUnmapped = ts.last().path.basePath.end(1).value()
+            val end = ts.last().path.end(2)
+            val endPose = end.value()
+            val endTangent = end.velocity().value().linearVel.angleCast()
+            TrajectoryCommandBuilder(
+                this,
+                TrajectoryBuilder(
+                    trajectoryBuilderParams,
+                    endPoseUnmapped,
+                    beginEndVel,
+                    baseVelConstraint,
+                    baseAccelConstraint,
+                    poseMap,
+                ),
+                0,
+                endPoseUnmapped,
+                endPose,
+                endTangent,
+                emptyList()
+            ) { tail ->
+                val (aNew, msRem) = ts.zip(ts.scan(0) { acc, t -> acc + t.offsets.size - 1 }).foldRight(
+                    Pair(tail, ms)
+                ) { (traj, offset), (acc, ms) ->
+                    val timeTraj = TimeTrajectory(traj)
+                    val actions = mutableListOf(seqCons(trajectoryCommandFactory.make(timeTraj), acc))
+                    val msRem = mutableListOf<MarkerFactory>()
+                    for (m in ms) {
+                        val i = m.segmentIndex - offset
+                        if (i >= 0) {
+                            actions.add(m.make(timeTraj, traj.offsets[i]))
+                        } else {
+                            msRem.add(m)
+                        }
+                    }
+
+                    if (actions.size == 1) {
+                        Pair(actions.first(), msRem)
+                    } else {
+                        Pair(Parallel(actions), msRem)
+                    }
+                }
+
+                require(msRem.isEmpty()) { "Unresolved markers" }
+
+                cont(aNew)
+            }
+        }
+
+    /**
+     * Stops the current trajectory (like [endTrajectory]) and adds command [command] next.
+     */
+    fun stopAndAdd(command: Command): TrajectoryCommandBuilder {
+        val b = endTrajectory()
+        return TrajectoryCommandBuilder(b, b.tb, b.n, b.lastPoseUnmapped, b.lastPose, b.lastTangent, b.ms) { tail ->
+            b.cont(seqCons(command, tail))
+        }
+    }
+
+    /**
+     * Waits [t] seconds.
+     */
+    fun waitSeconds(t: Double): TrajectoryCommandBuilder {
+        require(t >= 0.0) { "Time ($t) must be non-negative" }
+
+        return stopAndAdd(Wait(t))
+    }
+
+    /**
+     * Schedules action [command] to execute in parallel starting at a displacement [ds] after the last trajectory segment.
+     * The action start is clamped to the span of the current trajectory.
+     *
+     * Cannot be called without an applicable pending trajectory.
+     */
+    // TODO: Should calling this without an applicable trajectory implicitly begin an empty trajectory and execute the
+    // action immediately?
+    fun afterDisp(ds: Double, command: Command): TrajectoryCommandBuilder {
+        require(ds >= 0.0) { "Displacement ($ds) must be non-negative" }
+
+        return TrajectoryCommandBuilder(
+            this, tb, n, lastPoseUnmapped, lastPose, lastTangent,
+            ms + listOf(DispMarkerFactory(n, ds, command)), cont
+        )
+    }
+
+    /**
+     * Schedules action [command] to execute in parallel starting [dt] seconds after the last trajectory segment, turn, or
+     * other action.
+     */
+    fun afterTime(dt: Double, command: Command): TrajectoryCommandBuilder {
+        require(dt >= 0.0) { "Time ($dt) must be non-negative" }
+
+        return if (n == 0) {
+            TrajectoryCommandBuilder(this, tb, 0, lastPoseUnmapped, lastPose, lastTangent, emptyList()) { tail ->
+                cont(Parallel(tail, seqCons(Wait(dt), command)))
+            }
+        } else {
+            TrajectoryCommandBuilder(
+                this, tb, n, lastPoseUnmapped, lastPose, lastTangent,
+                ms + listOf(TimeMarkerFactory(n, dt, command)), cont
+            )
+        }
+    }
+
+    fun setTangent(r: Rotation2d) =
+        TrajectoryCommandBuilder(this, tb.setTangent(r), n, lastPoseUnmapped, lastPose, lastTangent, ms, cont)
+    fun setTangent(r: Double) = setTangent(Rotation2d.exp(r))
+
+    fun setReversed(reversed: Boolean) =
+        TrajectoryCommandBuilder(this, tb.setReversed(reversed), n, lastPoseUnmapped, lastPose, lastTangent, ms, cont)
+
+    @JvmOverloads
+    fun turn(angle: Double, turnConstraintsOverride: TurnConstraints? = null): TrajectoryCommandBuilder {
+        val b = endTrajectory()
+        val mappedAngle =
+            poseMap.map(
+                Pose2dDual(
+                    Vector2dDual.constant(b.lastPose.position, 2),
+                    Rotation2dDual.constant<Arclength>(b.lastPose.heading, 2) + DualNum(listOf(0.0, angle))
+                )
+            ).heading.velocity().value()
+        val b2 = b.stopAndAdd(
+            turnCommandFactory.make(
+                TimeTurn(b.lastPose, mappedAngle, turnConstraintsOverride ?: baseTurnConstraints)
+            )
+        )
+        val lastPoseUnmapped = Pose2d(b2.lastPoseUnmapped.position, b2.lastPoseUnmapped.heading + angle)
+        val lastPose = Pose2d(b2.lastPose.position, b2.lastPose.heading + mappedAngle)
+        val lastTangent = b2.lastTangent + mappedAngle
+        return TrajectoryCommandBuilder(
+            b2,
+            TrajectoryBuilder(
+                trajectoryBuilderParams,
+                lastPoseUnmapped,
+                beginEndVel,
                 baseVelConstraint,
                 baseAccelConstraint,
                 poseMap
-            )
-        }
-
-        return this
-    }
-
-    fun fresh(): TrajectoryCommandBuilder {
-        val built = builder.build()
-
-        val lastPose = built.last().path.end(1).value()
-
-        return TrajectoryCommandBuilder(
-            trajectoryFactory,
-            turnFactory,
-            lastPose,
-            params,
-            baseVelConstraint,
-            baseAccelConstraint,
-            baseTurnConstraint,
-            poseMap,
+            ),
+            b2.n, lastPoseUnmapped, lastPose, lastTangent, b2.ms, b2.cont
         )
     }
-
-    fun build(): Command {
-        if (size != commands.size) {
-            endTrajectory()
-        }
-
-        return Sequential(commands)
+    @JvmOverloads
+    fun turnTo(heading: Rotation2d, turnConstraintsOverride: TurnConstraints? = null): TrajectoryCommandBuilder {
+        val b = endTrajectory()
+        return b.turn(heading - b.lastPose.heading, turnConstraintsOverride)
     }
-
-    fun afterTime(time: Double, command: Command): TrajectoryCommandBuilder {
-        endTrajectory()
-
-        val last = commands.removeAt(commands.lastIndex)
-        commands += Parallel(last, Sequential(Wait(time), command))
-
-        return this
-    }
-
-    fun afterDisp(distance: Double, command: Command): TrajectoryCommandBuilder {
-        val built = builder.build()
-
-        val time = TimeProfile(built.last().profile.baseProfile).inverse(distance)
-
-        return this.afterTime(time, command)
-    }
-
-    fun stopAndAdd(command: Command): TrajectoryCommandBuilder {
-        size += 1
-        endTrajectory()
-        commands += command
-        return this
-    }
-
-    fun setTangent(tangent: Rotation2d): TrajectoryCommandBuilder {
-        builder = builder.setTangent(tangent)
-        return this
-    }
-
-    fun setTangent(tangent: Double): TrajectoryCommandBuilder {
-        return this.setTangent(Rotation2d.exp(tangent))
-    }
-
-    fun setReversed(reversed: Boolean): TrajectoryCommandBuilder {
-        builder = builder.setReversed(reversed)
-        return this
-    }
+    @JvmOverloads
+    fun turnTo(heading: Double, turnConstraintsOverride: TurnConstraints? = null) =
+        turnTo(Rotation2d.exp(heading), turnConstraintsOverride)
 
     @JvmOverloads
-    fun splineTo(
-        point: Vector2d,
-        tangent: Rotation2d,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        size += 1
-        builder = builder.splineTo(point, tangent, velOverride, accelOverride)
-        return this
-    }
+    fun lineToX(
+        posX: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToX(
+            posX, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
-    fun splineTo(
-        point: Vector2d,
-        tangent: Double,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        return this.splineTo(point, Rotation2d.exp(tangent), velOverride, accelOverride)
-    }
+    fun lineToXConstantHeading(
+        posX: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToXConstantHeading(
+            posX, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
-    fun splineToSplineHeading(
-        point: Pose2d,
-        tangent: Rotation2d,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        size += 1
-        builder = builder.splineToSplineHeading(point, tangent, velOverride, accelOverride)
-        return this
-    }
+    fun lineToXLinearHeading(
+        posX: Double,
+        heading: Rotation2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToXLinearHeading(
+            posX, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
+    @JvmOverloads
+    fun lineToXLinearHeading(
+        posX: Double,
+        heading: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToXLinearHeading(
+            posX, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
-    fun splineToSplineHeading(
-        point: Pose2d,
-        tangent: Double,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        return this.splineToSplineHeading(
-            point,
-            Rotation2d.exp(tangent),
-            velOverride,
-            accelOverride
-        )
-    }
+    fun lineToXSplineHeading(
+        posX: Double,
+        heading: Rotation2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToXSplineHeading(
+            posX, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
+    @JvmOverloads
+    fun lineToXSplineHeading(
+        posX: Double,
+        heading: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToXSplineHeading(
+            posX, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
-    fun splineToLinearHeading(
-        point: Pose2d,
-        tangent: Rotation2d,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        size += 1
-        builder = builder.splineToLinearHeading(point, tangent, velOverride, accelOverride)
-        return this
-    }
+    fun lineToY(
+        posY: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToY(
+            posY, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
-    fun splineToLinearHeading(
-        point: Pose2d,
-        tangent: Double,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        return this.splineToLinearHeading(
-            point,
-            Rotation2d.exp(tangent),
-            velOverride,
-            accelOverride
-        )
-    }
+    fun lineToYConstantHeading(
+        posY: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToYConstantHeading(
+            posY, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
-    fun splineToConstantHeading(
-        point: Vector2d,
-        tangent: Rotation2d,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        size += 1
-        builder = builder.splineToConstantHeading(point, tangent, velOverride, accelOverride)
-        return this
-    }
+    fun lineToYLinearHeading(
+        posY: Double,
+        heading: Rotation2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToYLinearHeading(
+            posY, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
+    @JvmOverloads
+    fun lineToYLinearHeading(
+        posY: Double,
+        heading: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToYLinearHeading(
+            posY, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
-    fun splineToConstantHeading(
-        point: Vector2d,
-        tangent: Double,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        return this.splineToConstantHeading(
-            point,
-            Rotation2d.exp(tangent),
-            velOverride,
-            accelOverride
-        )
-    }
+    fun lineToYSplineHeading(
+        posY: Double,
+        heading: Rotation2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToYSplineHeading(
+            posY, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
+    @JvmOverloads
+    fun lineToYSplineHeading(
+        posY: Double,
+        heading: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.lineToYSplineHeading(
+            posY, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
     fun strafeTo(
-        point: Vector2d,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        size += 1
-        builder = builder.strafeTo(point, velOverride, accelOverride)
-        return this
-    }
+        pos: Vector2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.strafeTo(
+            pos, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
-    fun strafeToSplineHeading(
-        point: Vector2d,
-        tangent: Rotation2d,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        size += 1
-        builder = builder.strafeToSplineHeading(point, tangent, velOverride, accelOverride)
-        return this
-    }
-
-    @JvmOverloads
-    fun strafeToSplineHeading(
-        point: Vector2d,
-        tangent: Double,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        return this.strafeToSplineHeading(
-            point,
-            Rotation2d.exp(tangent),
-            velOverride,
-            accelOverride
-        )
-    }
+    fun strafeToConstantHeading(
+        pos: Vector2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.strafeToConstantHeading(
+            pos, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
     fun strafeToLinearHeading(
-        point: Vector2d,
-        tangent: Rotation2d,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        size += 1
-        builder = builder.strafeToLinearHeading(point, tangent, velOverride, accelOverride)
-        return this
-    }
-
+        pos: Vector2d,
+        heading: Rotation2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.strafeToLinearHeading(
+            pos, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
     @JvmOverloads
     fun strafeToLinearHeading(
-        point: Vector2d,
+        pos: Vector2d,
+        heading: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.strafeToLinearHeading(
+            pos, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
+
+    @JvmOverloads
+    fun strafeToSplineHeading(
+        pos: Vector2d,
+        heading: Rotation2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.strafeToSplineHeading(
+            pos, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
+    @JvmOverloads
+    fun strafeToSplineHeading(
+        pos: Vector2d,
+        heading: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.strafeToSplineHeading(
+            pos, heading, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
+
+    @JvmOverloads
+    fun splineTo(
+        pos: Vector2d,
+        tangent: Rotation2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.splineTo(
+            pos, tangent, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
+    @JvmOverloads
+    fun splineTo(
+        pos: Vector2d,
         tangent: Double,
-        velOverride: VelConstraint? = null,
-        accelOverride: AccelConstraint? = null
-    ): TrajectoryCommandBuilder {
-        return this.strafeToLinearHeading(
-            point,
-            Rotation2d.exp(tangent),
-            velOverride,
-            accelOverride
-        )
-    }
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.splineTo(
+            pos, tangent, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
-    fun turn(
-        angle: Double,
-        turnOverride: TurnConstraints? = null
-    ): TrajectoryCommandBuilder {
-        size += 1
-
-        val built = builder.build()
-
-        val lastPose = built.last().path.end(1).value()
-
-        val mappedAngle = poseMap.map(
-            Pose2dDual(
-                Vector2dDual.constant(lastPose.position, 2),
-                Rotation2dDual.constant<Arclength>(lastPose.heading, 2) + DualNum(listOf(0.0, angle))
-            )
-        ).heading.velocity().value()
-
-        return this.stopAndAdd(
-            turnFactory(
-                TimeTurn(
-                    lastPose,
-                    mappedAngle,
-                    turnOverride ?: baseTurnConstraint
-                )
-            )
-        )
-    }
+    fun splineToConstantHeading(
+        pos: Vector2d,
+        tangent: Rotation2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.splineToConstantHeading(
+            pos, tangent, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
+    @JvmOverloads
+    fun splineToConstantHeading(
+        pos: Vector2d,
+        tangent: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.splineToConstantHeading(
+            pos, tangent, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
-    fun turn(
-        angle: Rotation2d,
-        turnOverride: TurnConstraints? = null
-    ): TrajectoryCommandBuilder {
-        return this.turn(angle.toDouble(), turnOverride)
-    }
+    fun splineToLinearHeading(
+        pose: Pose2d,
+        tangent: Rotation2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.splineToLinearHeading(
+            pose, tangent, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
+    @JvmOverloads
+    fun splineToLinearHeading(
+        pose: Pose2d,
+        tangent: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.splineToLinearHeading(
+            pose, tangent, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
 
     @JvmOverloads
-    fun turnTo(
-        angle: Double,
-        turnOverride: TurnConstraints? = null
-    ): TrajectoryCommandBuilder {
-        size += 1
-
-        val built = builder.build()
-
-        val lastPose = built.last().path.end(1).value()
-
-        return this.turn(angle - lastPose.heading.toDouble(), turnOverride)
-    }
-
+    fun splineToSplineHeading(
+        pose: Pose2d,
+        tangent: Rotation2d,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.splineToSplineHeading(
+            pose, tangent, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
     @JvmOverloads
-    fun turnTo(
-        angle: Rotation2d,
-        turnOverride: TurnConstraints? = null
-    ): TrajectoryCommandBuilder {
-        return this.turnTo(angle.toDouble(), turnOverride)
+    fun splineToSplineHeading(
+        pose: Pose2d,
+        tangent: Double,
+        velConstraintOverride: VelConstraint? = null,
+        accelConstraintOverride: AccelConstraint? = null
+    ) = TrajectoryCommandBuilder(
+        this,
+        tb.splineToSplineHeading(
+            pose, tangent, velConstraintOverride, accelConstraintOverride
+        ),
+        n + 1, lastPoseUnmapped, lastPose, lastTangent, ms, cont
+    )
+
+    /**
+     * Creates a new builder with the same settings at the current pose, tangent.
+     */
+    fun fresh() = endTrajectory().let {
+        TrajectoryCommandBuilder(
+            it.turnCommandFactory,
+            it.trajectoryCommandFactory,
+            it.trajectoryBuilderParams,
+            it.lastPoseUnmapped,
+            it.beginEndVel, it.baseTurnConstraints, it.baseVelConstraint, it.baseAccelConstraint,
+            it.poseMap
+        ).setTangent(it.lastTangent)
     }
+
+    fun build(): Command {
+        return endTrajectory().cont(Sequential())
+    }
+}
+
+val defaultTrajectoryParams = TrajectoryBuilderParams(
+    1e-6,
+    ProfileParams(
+        0.25, 0.1, 1e-2
+    )
+)
+
+private fun seqCons(hd: Command, tl: Command): Command =
+    if (tl is Sequential) {
+        Sequential(listOf(hd) + tl.commands)
+    } else {
+        Sequential(hd, tl)
+    }
+
+private abstract class MarkerFactory(
+    val segmentIndex: Int,
+) {
+    abstract fun make(t: TimeTrajectory, segmentDisp: Double): Command
+}
+
+private class TimeMarkerFactory(segmentIndex: Int, val dt: Double, val command: Command) : MarkerFactory(segmentIndex) {
+    override fun make(t: TimeTrajectory, segmentDisp: Double) =
+        seqCons(Wait(t.profile.inverse(segmentDisp) + dt), command)
+}
+
+private class DispMarkerFactory(segmentIndex: Int, val ds: Double, val command: Command) : MarkerFactory(segmentIndex) {
+    override fun make(t: TimeTrajectory, segmentDisp: Double) =
+        seqCons(Wait(t.profile.inverse(segmentDisp + ds)), command)
+}
+
+fun interface TurnCommandFactory {
+    fun make(t: TimeTurn): Command
+}
+
+fun interface TrajectoryCommandFactory {
+    fun make(t: TimeTrajectory): Command
 }
