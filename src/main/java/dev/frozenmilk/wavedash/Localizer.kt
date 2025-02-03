@@ -1,25 +1,23 @@
-package dev.frozenmilk.wavedash;
+package dev.frozenmilk.wavedash
 
-import com.acmerobotics.roadrunner.Pose2d;
-import com.acmerobotics.roadrunner.PoseVelocity2d;
+import com.acmerobotics.roadrunner.Pose2d
+import com.acmerobotics.roadrunner.PoseVelocity2d
 
 /**
  * Interface for localization methods.
  */
-public interface Localizer {
-    void setPose(Pose2d pose);
-
+interface Localizer {
     /**
-     * Returns the current pose estimate.
-     * NOTE: Does not update the pose estimate;
-     * you must call update() to update the pose estimate.
+     * The current pose according to the Localizer.
+     * NOTE: This pose is only changed when the `update`
+     * method is called.
      * @return the Localizer's current pose
      */
-    Pose2d getPose();
+    var pose: Pose2d
 
     /**
      * Updates the Localizer's pose estimate.
      * @return the Localizer's current velocity estimate
      */
-    PoseVelocity2d update();
+    fun update(): PoseVelocity2d
 }
