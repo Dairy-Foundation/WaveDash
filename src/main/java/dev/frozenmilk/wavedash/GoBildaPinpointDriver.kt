@@ -95,7 +95,7 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
 
     @Synchronized
     override fun doInitialize(): Boolean {
-        ((deviceClient) as LynxI2cDeviceSynch).setBusSpeed(LynxI2cDeviceSynch.BusSpeed.FAST_400K)
+        ((deviceClient) as LynxI2cDeviceSynch).setBusSpeed(LynxI2cDeviceSynch.BusSpeed.STANDARD_100K)
         return true
     }
 
