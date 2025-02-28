@@ -32,17 +32,21 @@ import com.qualcomm.robotcore.hardware.I2cDeviceSynchSimple
 import com.qualcomm.robotcore.hardware.configuration.annotations.DeviceProperties
 import com.qualcomm.robotcore.hardware.configuration.annotations.I2cDeviceType
 import com.qualcomm.robotcore.util.TypeConversion
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit
-import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.Arrays
 
-data class Pose2dMM(val x: Double, val y: Double, val heading: Rotation2d) {
+val Vector2d.vector2dMm get() = Vector2dMm(x * 25.4, y * 25.4)
+val Pose2d.pose2dMm get() = Pose2dMm(position.vector2dMm, heading)
+
+data class Vector2dMm(val x: Double, val y: Double) {
+    val vector2d = Vector2d(x, y) /  25.4
+}
+
+data class Pose2dMm(val positionMm: Vector2dMm, val heading: Rotation2d) {
+    constructor(x: Double, y: Double, heading: Rotation2d) : this(Vector2dMm(x, y), heading)
     constructor(x: Double, y: Double, heading: Double) : this(x, y, Rotation2d.fromDouble(heading))
 
-    val position = Vector2d(x, y)
-    val asPose2d = Pose2d(x/25.4, y/25.4, heading.toDouble())
+    val pose2d = Pose2d(positionMm.vector2d, heading)
 }
 
 @I2cDeviceType
@@ -144,9 +148,9 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
     }
 
     //enum that captures the kind of goBILDA odometry pods, if goBILDA pods are used
-    enum class GoBildaOdometryPods {
-        goBILDA_SWINGARM_POD,
-        goBILDA_4_BAR_POD
+    enum class GoBildaOdometryPods(val ticksPerMM: Float) {
+        goBILDA_SWINGARM_POD(13.26291192f),
+        goBILDA_4_BAR_POD(19.89436789f)
     }
 
     //enum that captures a limited scope of read data. More options may be added in future update
@@ -200,7 +204,7 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
      * @param value the float array to convert
      * @return the byte array converted from the float
      */
-    private fun floatToByteArray(value: Float, byteOrder: ByteOrder): ByteArray {
+    private fun floatToByteArray(value: Float, byteOrder: ByteOrder = ByteOrder.LITTLE_ENDIAN): ByteArray {
         return ByteBuffer.allocate(4).order(byteOrder).putFloat(value).array()
     }
 
@@ -236,22 +240,18 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
         val xPodDetected: Boolean = (s and DeviceStatus.FAULT_X_POD_NOT_DETECTED.status) == 0
         val yPodDetected: Boolean = (s and DeviceStatus.FAULT_Y_POD_NOT_DETECTED.status) == 0
 
-        if (!xPodDetected && !yPodDetected) {
-            return DeviceStatus.FAULT_NO_PODS_DETECTED
-        }
-        if (!xPodDetected) {
-            return DeviceStatus.FAULT_X_POD_NOT_DETECTED
-        }
-        if (!yPodDetected) {
-            return DeviceStatus.FAULT_Y_POD_NOT_DETECTED
-        }
-        if ((s and DeviceStatus.FAULT_IMU_RUNAWAY.status) != 0) {
-            return DeviceStatus.FAULT_IMU_RUNAWAY
-        }
-        if ((s and DeviceStatus.READY.status) != 0) {
-            return DeviceStatus.READY
+        return if (!xPodDetected && !yPodDetected) {
+            DeviceStatus.FAULT_NO_PODS_DETECTED
+        } else if (!xPodDetected) {
+            DeviceStatus.FAULT_X_POD_NOT_DETECTED
+        } else if (!yPodDetected) {
+            DeviceStatus.FAULT_Y_POD_NOT_DETECTED
+        } else if ((s and DeviceStatus.FAULT_IMU_RUNAWAY.status) != 0) {
+            DeviceStatus.FAULT_IMU_RUNAWAY
+        } else if ((s and DeviceStatus.READY.status) != 0) {
+            DeviceStatus.READY
         } else {
-            return DeviceStatus.NOT_READY
+            DeviceStatus.NOT_READY
         }
     }
 
@@ -261,19 +261,19 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
     fun update() {
         val bArr: ByteArray = deviceClient!!.read(Register.BULK_READ.bVal, 40)
         deviceStatus =
-            TypeConversion.byteArrayToInt(Arrays.copyOfRange(bArr, 0, 4), ByteOrder.LITTLE_ENDIAN)
+            TypeConversion.byteArrayToInt(bArr.copyOfRange(0, 4), ByteOrder.LITTLE_ENDIAN)
         loopTime =
-            TypeConversion.byteArrayToInt(Arrays.copyOfRange(bArr, 4, 8), ByteOrder.LITTLE_ENDIAN)
+            TypeConversion.byteArrayToInt(bArr.copyOfRange(4, 8), ByteOrder.LITTLE_ENDIAN)
         encoderX =
-            TypeConversion.byteArrayToInt(Arrays.copyOfRange(bArr, 8, 12), ByteOrder.LITTLE_ENDIAN)
+            TypeConversion.byteArrayToInt(bArr.copyOfRange(8, 12), ByteOrder.LITTLE_ENDIAN)
         encoderY =
-            TypeConversion.byteArrayToInt(Arrays.copyOfRange(bArr, 12, 16), ByteOrder.LITTLE_ENDIAN)
-        xPosition = byteArrayToFloat(Arrays.copyOfRange(bArr, 16, 20), ByteOrder.LITTLE_ENDIAN)
-        yPosition = byteArrayToFloat(Arrays.copyOfRange(bArr, 20, 24), ByteOrder.LITTLE_ENDIAN)
-        hOrientation = byteArrayToFloat(Arrays.copyOfRange(bArr, 24, 28), ByteOrder.LITTLE_ENDIAN)
-        xVelocity = byteArrayToFloat(Arrays.copyOfRange(bArr, 28, 32), ByteOrder.LITTLE_ENDIAN)
-        yVelocity = byteArrayToFloat(Arrays.copyOfRange(bArr, 32, 36), ByteOrder.LITTLE_ENDIAN)
-        hVelocity = byteArrayToFloat(Arrays.copyOfRange(bArr, 36, 40), ByteOrder.LITTLE_ENDIAN)
+            TypeConversion.byteArrayToInt(bArr.copyOfRange(12, 16), ByteOrder.LITTLE_ENDIAN)
+        xPosition = byteArrayToFloat(bArr.copyOfRange(16, 20), ByteOrder.LITTLE_ENDIAN)
+        yPosition = byteArrayToFloat(bArr.copyOfRange(20, 24), ByteOrder.LITTLE_ENDIAN)
+        hOrientation = byteArrayToFloat(bArr.copyOfRange(24, 28), ByteOrder.LITTLE_ENDIAN)
+        xVelocity = byteArrayToFloat(bArr.copyOfRange(28, 32), ByteOrder.LITTLE_ENDIAN)
+        yVelocity = byteArrayToFloat(bArr.copyOfRange(32, 36), ByteOrder.LITTLE_ENDIAN)
+        hVelocity = byteArrayToFloat(bArr.copyOfRange(36, 40), ByteOrder.LITTLE_ENDIAN)
     }
 
     /**
@@ -293,7 +293,7 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
 
     /**
      * Sets the odometry pod positions relative to the point that the odometry computer tracks around.<br></br><br></br>
-     * The most common tracking position is the center of the robot. <br></br> <br></br>
+     * The most common tracking positionMm is the center of the robot. <br></br> <br></br>
      * The X pod offset refers to how far sideways (in mm) from the tracking point the X (forward) odometry pod is. Left of the center is a positive number, right of center is a negative number. <br></br>
      * the Y pod offset refers to how far forwards (in mm) from the tracking point the Y (strafe) odometry pod is. forward of center is a positive number, backwards is a negative number.<br></br>
      * @param xOffset how sideways from the center of the robot is the X (forward) pod? Left increases
@@ -314,7 +314,7 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
     }
 
     /**
-     * Resets the current position to 0,0,0 and recalibrates the Odometry Computer's internal IMU. <br></br><br></br>
+     * Resets the current positionMm to 0,0,0 and recalibrates the Odometry Computer's internal IMU. <br></br><br></br>
      * ** Robot MUST be stationary ** <br></br><br></br>
      * Device takes a large number of samples, and uses those as the gyroscope zero-offset. This takes approximately 0.25 seconds.
      */
@@ -348,18 +348,10 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
      * @param pods goBILDA_SWINGARM_POD or goBILDA_4_BAR_POD
      */
     fun setEncoderResolution(pods: GoBildaOdometryPods) {
-        if (pods == GoBildaOdometryPods.goBILDA_SWINGARM_POD) {
-            writeByteArray(
+        writeByteArray(
                 Register.MM_PER_TICK,
-                (floatToByteArray(goBILDA_SWINGARM_POD.toFloat(), ByteOrder.LITTLE_ENDIAN))
+                (floatToByteArray(pods.ticksPerMM, ByteOrder.LITTLE_ENDIAN))
             )
-        }
-        if (pods == GoBildaOdometryPods.goBILDA_4_BAR_POD) {
-            writeByteArray(
-                Register.MM_PER_TICK,
-                (floatToByteArray(goBILDA_4_BAR_POD.toFloat(), ByteOrder.LITTLE_ENDIAN))
-            )
-        }
     }
 
     /**
@@ -367,10 +359,10 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
      * You can find this number by dividing the counts-per-revolution of your encoder by the circumference of the wheel.
      * @param ticks_per_mm should be somewhere between 10 ticks/mm and 100 ticks/mm a goBILDA Swingarm pod is ~13.26291192
      */
-    fun setEncoderResolution(ticks_per_mm: Double) {
+    fun setEncoderResolution(ticksPerMm: Double) {
         writeByteArray(
             Register.MM_PER_TICK,
-            (floatToByteArray(ticks_per_mm.toFloat(), ByteOrder.LITTLE_ENDIAN))
+            (floatToByteArray(ticksPerMm.toFloat(), ByteOrder.LITTLE_ENDIAN))
         )
     }
 
@@ -391,35 +383,35 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
     }
 
     /**
-     * Send a position that the Pinpoint should use to track your robot relative to. You can use this to
-     * update the estimated position of your robot with new external sensor data, or to run a robot
+     * Send a positionMm that the Pinpoint should use to track your robot relative to. You can use this to
+     * update the estimated positionMm of your robot with new external sensor data, or to run a robot
      * in field coordinates. <br></br><br></br>
-     * This overrides the current position. <br></br><br></br>
-     * **Using this feature to track your robot's position in field coordinates:** <br></br>
-     * When you start your code, send a Pose2dMM that describes the starting position on the field of your robot. <br></br>
+     * This overrides the current positionMm. <br></br><br></br>
+     * **Using this feature to track your robot's positionMm in field coordinates:** <br></br>
+     * When you start your code, send a Pose2dMm that describes the starting positionMm on the field of your robot. <br></br>
      * Say you're on the red alliance, your robot is against the wall and closer to the audience side,
      * and the front of your robot is pointing towards the center of the field.
      * You can send a setPosition with something like -600mm x, -1200mm Y, and 90 degrees. The pinpoint would then always
      * keep track of how far away from the center of the field you are. <br></br><br></br>
-     * **Using this feature to update your position with additional sensors: **<br></br>
+     * **Using this feature to update your positionMm with additional sensors: **<br></br>
      * Some robots have a secondary way to locate their robot on the field. This is commonly
      * Apriltag localization in FTC, but it can also be something like a distance sensor.
      * Often these external sensors are absolute (meaning they measure something about the field)
      * so their data is very accurate. But they can be slower to read, or you may need to be in a very specific
-     * position on the field to use them. In that case, spend most of your time relying on the Pinpoint
-     * to determine your location. Then when you pull a new position from your secondary sensor,
-     * send a setPosition command with the new position. The Pinpoint will then track your movement
-     * relative to that new, more accurate position.
-     * @param pos a Pose2dMM describing the robot's new position.
+     * positionMm on the field to use them. In that case, spend most of your time relying on the Pinpoint
+     * to determine your location. Then when you pull a new positionMm from your secondary sensor,
+     * send a setPosition command with the new positionMm. The Pinpoint will then track your movement
+     * relative to that new, more accurate positionMm.
+     * @param pos a Pose2dMm describing the robot's new positionMm.
      */
-    fun setPosition(pos: Pose2dMM): Pose2dMM {
+    fun setPosition(pos: Pose2dMm): Pose2dMm {
         writeByteArray(
             Register.X_POSITION,
-            (floatToByteArray(pos.x.toFloat(), ByteOrder.LITTLE_ENDIAN))
+            (floatToByteArray(pos.positionMm.x.toFloat(), ByteOrder.LITTLE_ENDIAN))
         )
         writeByteArray(
             Register.Y_POSITION,
-            (floatToByteArray(pos.y.toFloat(), ByteOrder.LITTLE_ENDIAN))
+            (floatToByteArray(pos.positionMm.y.toFloat(), ByteOrder.LITTLE_ENDIAN))
         )
         writeByteArray(
             Register.H_ORIENTATION,
@@ -427,6 +419,7 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
         )
         return pos
     }
+    fun setPosition(pos: Pose2d): Pose2d = setPosition(pos.pose2dMm).pose2d
 
     val deviceID: Int
         /**
@@ -474,19 +467,19 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
 
     val posX: Double
         /**
-         * @return the estimated X (forward) position of the robot in mm
+         * @return the estimated X (forward) positionMm of the robot in mm
          */
         get() = xPosition.toDouble()
 
     val posY: Double
         /**
-         * @return the estimated Y (Strafe) position of the robot in mm
+         * @return the estimated Y (Strafe) positionMm of the robot in mm
          */
         get() = yPosition.toDouble()
 
     val heading: Double
         /**
-         * @return the estimated H (heading) position of the robot in Radians
+         * @return the estimated H (heading) positionMm of the robot in Radians
          */
         get() = hOrientation.toDouble()
 
@@ -522,23 +515,23 @@ class GoBildaPinpointDriver(deviceClient: I2cDeviceSynchSimple?, deviceClientIsO
          */
         get() = readFloat(Register.Y_POD_OFFSET)
 
-    val position: Pose2dMM
+    val position: Pose2dMm
         /**
-         * @return a Pose2dMM containing the estimated position of the robot
+         * @return a Pose2dMm containing the estimated positionMm of the robot
          */
-        get() = Pose2dMM(
+        get() = Pose2dMm(
             xPosition.toDouble(),
             yPosition.toDouble(),
             hOrientation.toDouble()
         )
 
 
-    val velocity: Pose2dMM
+    val velocity: Pose2dMm
         /**
-         * @return a Pose2dMM containing the estimated velocity of the robot, velocity is unit per second
+         * @return a Pose2dMm containing the estimated velocity of the robot, velocity is unit per second
          */
         get() {
-            return Pose2dMM(
+            return Pose2dMm(
                 xVelocity.toDouble(),
                 yVelocity.toDouble(),
                 hVelocity.toDouble()
