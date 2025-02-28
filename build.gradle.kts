@@ -23,7 +23,7 @@ repositories {
 }
 
 dependencies {
-	api("com.acmerobotics.roadrunner:ftc:0.1.16")
+	compileOnly("com.acmerobotics.roadrunner:ftc:0.1.16")
 
 	implementation("com.acmerobotics.roadrunner:core:1.0.1")
 	implementation("com.acmerobotics.dashboard:dashboard:0.4.16")
