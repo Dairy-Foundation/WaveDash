@@ -19,6 +19,7 @@ ftc {
 repositories {
 	mavenCentral()
 	maven("https://repo.dairy.foundation/releases/")
+	maven("https://repo.dairy.foundation/snapshots/")
 	maven("https://maven.brott.dev/")
 }
 
@@ -28,9 +29,9 @@ dependencies {
 	implementation("com.acmerobotics.roadrunner:core:1.0.1")
 	implementation("com.acmerobotics.dashboard:dashboard:0.4.16")
 
-	implementation("dev.frozenmilk.dairy:Core:1.0.1")
+	implementation("dev.frozenmilk.dairy:Core:2.0.0")
 	implementation("dev.frozenmilk.dairy:Pasteurized:1.0.0")
-	implementation("dev.frozenmilk.mercurial:Mercurial:1.0.0")
+	implementation("dev.frozenmilk.mercurial:Mercurial:1.0.3")
 }
 
 dairyPublishing {

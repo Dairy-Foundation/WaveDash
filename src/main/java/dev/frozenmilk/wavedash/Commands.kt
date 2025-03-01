@@ -52,7 +52,7 @@ class TrajectoryCommandBuilder private constructor(
     @JvmOverloads
     constructor(
         turnActionFactory: TurnCommandFactory,
-        trajectoryActionFactory: TrajectoryCommandFactory,
+        trajectoryCommandFactory: TrajectoryCommandFactory,
         trajectoryBuilderParams: TrajectoryBuilderParams,
         beginPose: Pose2d,
         beginEndVel: Double,
@@ -63,7 +63,7 @@ class TrajectoryCommandBuilder private constructor(
     ) :
             this(
                 turnActionFactory,
-                trajectoryActionFactory,
+                trajectoryCommandFactory,
                 trajectoryBuilderParams,
                 beginEndVel,
                 baseTurnConstraints,
@@ -224,6 +224,42 @@ class TrajectoryCommandBuilder private constructor(
             )
         }
     }
+
+    /**
+     * Schedules [command] to execute in parallel starting at a time [dt] before the end of the last trajectory
+     * segment.
+     *
+     * Cannot be called without an applicable pending trajectory.
+     */
+    fun untilTime(dt: Double, command: Command): TrajectoryCommandBuilder {
+        require(dt >= 0.0) { "Time ($dt) must be non-negative" }
+
+        return TrajectoryCommandBuilder(
+            this, tb, n, lastPoseUnmapped, lastPose, lastTangent,
+            ms + listOf(UntilTimeMarkerFactory(n, dt, command)), cont
+        )
+    }
+
+    /**
+     * Schedules [command] to execute in parallel starting at a displacement [ds] before the end of the last trajectory
+     * segment.
+     *
+     * Cannot be called without an applicable pending trajectory.
+     */
+    fun untilDisp(ds: Double, command: Command): TrajectoryCommandBuilder {
+        require(ds >= 0.0) { "Displacement ($ds) must be non-negative" }
+
+        return TrajectoryCommandBuilder(
+            this, tb, n, lastPoseUnmapped, lastPose, lastTangent,
+            ms + listOf(UntilDispMarkerFactory(n, ds, command)), cont
+        )
+    }
+
+    /**
+     * Schedules [command] to execute in parallel starting with the last trajectory segment.
+     * This is equivalent to [afterTime] with a dt of 0.
+     */
+    fun duringLast(command: Command) = afterTime(0.0, command)
 
     fun setTangent(r: Rotation2d) =
         TrajectoryCommandBuilder(this, tb.setTangent(r), n, lastPoseUnmapped, lastPose, lastTangent, ms, cont)
@@ -668,6 +704,16 @@ private class TimeMarkerFactory(segmentIndex: Int, val dt: Double, val command: 
 private class DispMarkerFactory(segmentIndex: Int, val ds: Double, val command: Command) : MarkerFactory(segmentIndex) {
     override fun make(t: TimeTrajectory, segmentDisp: Double) =
         seqCons(Wait(t.profile.inverse(segmentDisp + ds)), command)
+}
+
+private class UntilTimeMarkerFactory(segmentIndex: Int, val dt: Double, val command: Command) : MarkerFactory(segmentIndex) {
+    override fun make(t: TimeTrajectory, segmentDisp: Double) =
+        seqCons(Wait(t.profile.inverse(segmentDisp) + t.duration - dt), command)
+}
+
+private class UntilDispMarkerFactory(segmentIndex: Int, val ds: Double, val command: Command) : MarkerFactory(segmentIndex) {
+    override fun make(t: TimeTrajectory, segmentDisp: Double) =
+        seqCons(Wait(t.profile.inverse(segmentDisp + t.profile.dispProfile.length - ds)), command)
 }
 
 fun interface TurnCommandFactory {
